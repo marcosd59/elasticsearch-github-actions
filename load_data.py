@@ -2,15 +2,17 @@ import uuid
 import pandas as pd
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import parallel_bulk
+import time
 
-# Conexión a Elasticsearch
+# ✅ Parámetros de conexión
 ELASTICSEARCH_URL = 'http://localhost:9200'
 INDEX_NAME = 'stock_data'
 
-# ✅ Leer CSV correctamente
+# ✅ Leer CSV
+print("📥 Reading CSV file...")
 df = pd.read_csv('stock_data.csv')
 
-# ✅ Renombrar columnas a español (opcional para consistencia)
+# ✅ Renombrar columnas (opcional)
 df.columns = ['Fecha', 'Precio Cierre',
               'Máximo', 'Mínimo', 'Apertura', 'Volumen']
 
@@ -24,8 +26,30 @@ df['Apertura'] = pd.to_numeric(df['Apertura'], errors='coerce').fillna(0)
 df['Volumen'] = pd.to_numeric(
     df['Volumen'], errors='coerce').fillna(0).astype(int)
 
-# ✅ Crear índice con mapping en Elasticsearch
-if not Elasticsearch(ELASTICSEARCH_URL).indices.exists(index=INDEX_NAME):
+# ✅ Intentar conectar a Elasticsearch con reintentos
+RETRIES = 5
+connected = False
+
+for i in range(RETRIES):
+    try:
+        print(
+            f"🚀 Attempting to connect to Elasticsearch (try {i + 1}/{RETRIES})...")
+        es = Elasticsearch(ELASTICSEARCH_URL)
+        if es.ping():
+            connected = True
+            print("✅ Connected to Elasticsearch!")
+            break
+    except Exception as e:
+        print(f"❌ Connection failed: {e}")
+        time.sleep(5)
+
+if not connected:
+    raise ConnectionError(
+        "❌ Could not connect to Elasticsearch after multiple attempts")
+
+# ✅ Crear índice si no existe
+if not es.indices.exists(index=INDEX_NAME):
+    print(f"📢 Creating index '{INDEX_NAME}'...")
     mapping = {
         "mappings": {
             "properties": {
@@ -38,9 +62,8 @@ if not Elasticsearch(ELASTICSEARCH_URL).indices.exists(index=INDEX_NAME):
             }
         }
     }
-    Elasticsearch(ELASTICSEARCH_URL).indices.create(
-        index=INDEX_NAME, body=mapping)
-    print(f"✅ Índice '{INDEX_NAME}' creado correctamente")
+    es.indices.create(index=INDEX_NAME, body=mapping)
+    print(f"✅ Index '{INDEX_NAME}' created successfully")
 
 # ✅ Generar documentos para Elasticsearch
 
@@ -49,14 +72,16 @@ def generate_docs(df):
     for _, row in df.iterrows():
         yield {
             "_index": INDEX_NAME,
-            "_id": str(uuid.uuid4()),  # Genera un ID único para cada documento
+            # Generar un ID único para cada documento
+            "_id": str(uuid.uuid4()),
             "_source": row.to_dict()
         }
 
 
-# ✅ Insertar datos en lotes pequeños para evitar sobrecarga
-for success, info in parallel_bulk(Elasticsearch(ELASTICSEARCH_URL), generate_docs(df), chunk_size=50):
+# ✅ Insertar datos en Elasticsearch en lotes
+print("🚀 Inserting data into Elasticsearch...")
+for success, info in parallel_bulk(es, generate_docs(df), chunk_size=50):
     if not success:
-        print(f"❌ Documento fallido: {info}")
+        print(f"❌ Failed to insert document: {info}")
 
-print(f"✅ Datos cargados correctamente en el índice '{INDEX_NAME}'")
+print(f"✅ Data loaded successfully into '{INDEX_NAME}'!")
