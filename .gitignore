@@ -1,0 +1,10 @@
+# Ignorar entorno virtual
+venv/
+__pycache__/
+
+# Archivos de configuración y logs
+*.log
+*.pyc
+
+# Archivos de entorno (si usas .env para claves y credenciales)
+.env
